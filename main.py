@@ -7,7 +7,7 @@ from collections import deque
 from queue import Queue, Empty
 from threading import Lock, Thread
 
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, Blueprint, request, jsonify, render_template
 from flask_sock import Sock
 
 import config
@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 # --- Flask app ---
 app = Flask(__name__)
+bp = Blueprint("main", __name__)
 sock = Sock(app)
 
 # Download queue state
@@ -152,7 +153,7 @@ def _ensure_tail_started():
 # --- WebSocket endpoint ---
 
 
-@sock.route("/ws")
+@sock.route(config.URL_PREFIX + "/ws")
 def ws_handler(ws):
     """Each client connects here. We send cached log lines, then relay
     broadcast messages from the per-client queue until disconnect."""
@@ -184,10 +185,10 @@ def ws_handler(ws):
 # --- Routes ---
 
 
-@app.route("/", methods=["GET"])
+@bp.route("/", methods=["GET"])
 def index():
     artists = library.load_artists()
-    return render_template("index.jinja", artists=artists)
+    return render_template("index.jinja", artists=artists, prefix=config.URL_PREFIX)
 
 
 def _download_url(url: str):
@@ -245,7 +246,7 @@ def _download_url(url: str):
         ws_broadcast("progress", {"url": url, "status": "Error"})
 
 
-@app.route("/queue", methods=["POST"])
+@bp.route("/queue", methods=["POST"])
 def add_to_queue():
     data = request.get_json()
     urls = data.get("urls", [])
@@ -259,7 +260,7 @@ def add_to_queue():
     return jsonify({"added": added}), 201
 
 
-@app.route("/progress/<path:url>", methods=["GET"])
+@bp.route("/progress/<path:url>", methods=["GET"])
 def get_progress_for_url(url):
     from urllib.parse import unquote
     url = unquote(url)
@@ -273,12 +274,12 @@ def get_progress_for_url(url):
 # --- Artist management API ---
 
 
-@app.route("/artists", methods=["GET"])
+@bp.route("/artists", methods=["GET"])
 def list_artists():
     return jsonify(library.load_artists())
 
 
-@app.route("/artists/search", methods=["GET"])
+@bp.route("/artists/search", methods=["GET"])
 def search_artists():
     query = request.args.get("q", "").strip()
     if not query:
@@ -288,7 +289,7 @@ def search_artists():
     return jsonify(results)
 
 
-@app.route("/artists", methods=["POST"])
+@bp.route("/artists", methods=["POST"])
 def add_artist_route():
     data = request.get_json()
     name = data.get("name", "").strip()
@@ -299,7 +300,7 @@ def add_artist_route():
     return jsonify({"added": added, "name": name, "channelId": channel_id}), 201 if added else 200
 
 
-@app.route("/artists/<channel_id>", methods=["DELETE"])
+@bp.route("/artists/<channel_id>", methods=["DELETE"])
 def remove_artist_route(channel_id):
     removed = library.remove_artist(channel_id)
     if not removed:
@@ -307,11 +308,15 @@ def remove_artist_route(channel_id):
     return jsonify({"removed": True})
 
 
-@app.route("/check-now", methods=["POST"])
+@bp.route("/check-now", methods=["POST"])
 def trigger_check():
     """Manually trigger a release check."""
     Thread(target=scheduler.check_artists_for_new_releases, daemon=True).start()
     return jsonify({"status": "Check started"})
+
+
+# Register blueprint with URL prefix
+app.register_blueprint(bp, url_prefix=config.URL_PREFIX)
 
 
 # --- Entrypoint ---

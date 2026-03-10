@@ -1,5 +1,6 @@
 import logging
 import re
+from datetime import datetime, timezone
 from urllib.parse import urlparse, parse_qs
 
 from ytmusicapi import YTMusic
@@ -116,6 +117,23 @@ def get_lyrics(yt: YTMusic, video_id: str) -> str | None:
         return lyrics_data.get("lyrics")
     except Exception:
         logger.debug("Could not get lyrics for %s", video_id)
+        return None
+
+
+def get_release_date(yt: YTMusic, video_id: str) -> datetime | None:
+    """Get the publish date of a song via get_song() microformat.
+
+    Returns a timezone-aware datetime, or None on failure.
+    """
+    try:
+        song = yt.get_song(video_id)
+        mf = song.get("microformat", {}).get("microformatDataRenderer", {})
+        date_str = mf.get("publishDate") or mf.get("uploadDate")
+        if not date_str:
+            return None
+        return datetime.fromisoformat(date_str)
+    except Exception:
+        logger.debug("Could not get release date for %s", video_id)
         return None
 
 

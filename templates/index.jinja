@@ -184,21 +184,25 @@
                 <div style="display:flex; gap:8px; margin-bottom:8px;">
                     <button class="btn-secondary btn-small" id="btn-check-now">Check for new releases now</button>
                 </div>
+
+                <h3>Add Artist</h3>
+                <div style="display:flex; gap:8px;">
+                    <input type="text" id="artist-search" placeholder="Search artist on YouTube Music...">
+                    <button class="btn-secondary" id="btn-artist-search">Search</button>
+                </div>
+                <ul id="search-results" class="search-results"></ul>
+
+                <h3>Your Artists <span id="artist-count" style="font-weight:normal; font-size:0.85em; color:#888;"></span></h3>
+                <input type="text" id="artist-filter" placeholder="Filter artists...">
                 <ul id="artist-list" class="artist-list">
                     {% for artist in artists %}
-                    <li class="artist-item" data-id="{{ artist.channelId }}">
+                    <li class="artist-item" data-id="{{ artist.channelId }}" data-name="{{ artist.name | lower }}">
                         <span class="name">{{ artist.name }}</span>
                         <button class="btn-danger btn-small btn-remove-artist">Remove</button>
                     </li>
                     {% endfor %}
                 </ul>
-
-                <h3>Add Artist</h3>
-                <div style="display:flex; gap:8px;">
-                    <input type="text" id="artist-search" placeholder="Search artist name...">
-                    <button class="btn-secondary" id="btn-artist-search">Search</button>
-                </div>
-                <ul id="search-results" class="search-results"></ul>
+                <button class="btn-secondary btn-small" id="btn-show-more" style="display:none; margin-top:8px; width:100%;">Show more</button>
             </div>
         </div>
 
@@ -216,6 +220,7 @@
     </div>
 
     <script>
+    const PREFIX = {{ prefix|tojson }};
     const form = document.getElementById('download-form');
     const progressList = document.getElementById('progress-list');
     const logPanel = document.getElementById('log-panel');
@@ -227,6 +232,10 @@
     const artistSearchInput = document.getElementById('artist-search');
     const btnArtistSearch = document.getElementById('btn-artist-search');
     const btnCheckNow = document.getElementById('btn-check-now');
+    const artistFilter = document.getElementById('artist-filter');
+    const btnShowMore = document.getElementById('btn-show-more');
+    const artistCount = document.getElementById('artist-count');
+    const ARTISTS_PAGE_SIZE = 20;
 
     // Log toggle
     const toggle = document.createElement('button');
@@ -240,7 +249,7 @@
     const progressHandlers = [];
 
     function connectWs() {
-        ws = new WebSocket(`${wsProto}//${location.host}/ws`);
+        ws = new WebSocket(`${wsProto}//${location.host}${PREFIX}/ws`);
         ws.onmessage = (evt) => {
             const msg = JSON.parse(evt.data);
             if (msg.event === 'log') {
@@ -265,7 +274,7 @@
 
         const existingUrls = Array.from(progressList.children).map(li => li.querySelector('strong')?.textContent);
 
-        fetch('/queue', {
+        fetch(`${PREFIX}/queue`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ urls })
@@ -322,14 +331,46 @@
         logBody.innerHTML = '<div class="log-line log-muted">Cleared.</div>';
     });
 
+    // --- Artist list: filter + show-more ---
+    let artistLimit = ARTISTS_PAGE_SIZE;
+
+    function refreshArtistList() {
+        const filter = artistFilter.value.trim().toLowerCase();
+        const items = Array.from(artistList.querySelectorAll('.artist-item'));
+        let visible = 0;
+        let totalMatch = 0;
+        items.forEach(li => {
+            const name = li.dataset.name || '';
+            const matches = !filter || name.includes(filter);
+            if (matches) {
+                totalMatch++;
+                if (totalMatch <= artistLimit) {
+                    li.style.display = '';
+                    visible++;
+                } else {
+                    li.style.display = 'none';
+                }
+            } else {
+                li.style.display = 'none';
+            }
+        });
+        artistCount.textContent = `(${totalMatch})`;
+        btnShowMore.style.display = (totalMatch > artistLimit) ? '' : 'none';
+        btnShowMore.textContent = `Show more (${totalMatch - visible} remaining)`;
+    }
+
+    artistFilter.addEventListener('input', () => { artistLimit = ARTISTS_PAGE_SIZE; refreshArtistList(); });
+    btnShowMore.addEventListener('click', () => { artistLimit += ARTISTS_PAGE_SIZE; refreshArtistList(); });
+    refreshArtistList();
+
     // --- Artist management ---
     function attachRemoveHandlers() {
         document.querySelectorAll('.btn-remove-artist').forEach(btn => {
             btn.onclick = async function () {
                 const li = btn.closest('.artist-item');
                 const channelId = li.dataset.id;
-                const resp = await fetch(`/artists/${channelId}`, { method: 'DELETE' });
-                if (resp.ok) li.remove();
+                const resp = await fetch(`${PREFIX}/artists/${channelId}`, { method: 'DELETE' });
+                if (resp.ok) { li.remove(); refreshArtistList(); }
             };
         });
     }
@@ -339,7 +380,7 @@
         const q = artistSearchInput.value.trim();
         if (!q) return;
         searchResults.innerHTML = '<li class="log-muted">Searching...</li>';
-        const resp = await fetch(`/artists/search?q=${encodeURIComponent(q)}`);
+        const resp = await fetch(`${PREFIX}/artists/search?q=${encodeURIComponent(q)}`);
         const results = await resp.json();
         searchResults.innerHTML = '';
         results.forEach(r => {
@@ -347,7 +388,7 @@
             li.className = 'search-result-item';
             li.innerHTML = `<span>${r.name}</span><button class="btn-small">Add</button>`;
             li.querySelector('button').onclick = async () => {
-                const addResp = await fetch('/artists', {
+                const addResp = await fetch(`${PREFIX}/artists`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name: r.name, channelId: r.channelId })
@@ -356,9 +397,11 @@
                     const newLi = document.createElement('li');
                     newLi.className = 'artist-item';
                     newLi.dataset.id = r.channelId;
+                    newLi.dataset.name = r.name.toLowerCase();
                     newLi.innerHTML = `<span class="name">${r.name}</span><button class="btn-danger btn-small btn-remove-artist">Remove</button>`;
                     artistList.appendChild(newLi);
                     attachRemoveHandlers();
+                    refreshArtistList();
                     li.remove();
                 }
             };
@@ -376,7 +419,7 @@
     btnCheckNow.addEventListener('click', async () => {
         btnCheckNow.disabled = true;
         btnCheckNow.textContent = 'Checking...';
-        await fetch('/check-now', { method: 'POST' });
+        await fetch(`${PREFIX}/check-now`, { method: 'POST' });
         setTimeout(() => {
             btnCheckNow.disabled = false;
             btnCheckNow.textContent = 'Check for new releases now';

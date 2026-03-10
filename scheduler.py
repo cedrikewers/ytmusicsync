@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -22,9 +22,10 @@ def check_artists_for_new_releases() -> None:
 
     yt = ytmusic_client.create_client()
     current_year = datetime.now().year
-    min_year = current_year - 1  # Check current and previous year
+    min_year = current_year - 1  # Coarse year filter before precise date check
+    cutoff = datetime.now(timezone.utc) - timedelta(days=config.LOOKBACK_DAYS)
 
-    logger.info("Checking %d artists for new releases...", len(artists))
+    logger.info("Checking %d artists for new releases (last %d days)...", len(artists), config.LOOKBACK_DAYS)
     total_downloaded = 0
 
     for artist in artists:
@@ -44,10 +45,9 @@ def check_artists_for_new_releases() -> None:
             try:
                 year = int(year_str)
             except (ValueError, TypeError):
-                # If year can't be parsed (e.g. "Single"), skip year filtering
-                # and check by directory name only
                 year = current_year
 
+            # Coarse filter: skip anything obviously too old
             if year < min_year:
                 continue
 
@@ -61,9 +61,30 @@ def check_artists_for_new_releases() -> None:
             if library.is_downloaded(dir_name):
                 continue
 
-            # Fetch full album info and download
+            # Precise date check: fetch album, get first track's publish date
             try:
                 album_info = ytmusic_client.get_album(yt, browse_id)
+            except Exception:
+                logger.exception("Failed to fetch album %s by %s", release_title, name)
+                continue
+
+            first_video_id = None
+            for t in album_info.get("tracks", []):
+                if t.get("videoId"):
+                    first_video_id = t["videoId"]
+                    break
+
+            if first_video_id:
+                release_date = ytmusic_client.get_release_date(yt, first_video_id)
+                if release_date is not None and release_date < cutoff:
+                    logger.debug(
+                        "Skipping %s by %s — released %s, before cutoff %s",
+                        release_title, name, release_date.date(), cutoff.date(),
+                    )
+                    continue
+
+            # Download
+            try:
                 downloaded = downloader.download_album(album_info, yt_client=yt)
                 if downloaded:
                     total_downloaded += 1

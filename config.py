@@ -24,3 +24,7 @@ LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 # Paths derived from DATA_DIR
 ARTISTS_FILE = os.path.join(DATA_DIR, "artists.json")
 IGNORE_FILE = os.path.join(DATA_DIR, "ignore.txt")
+
+# URL prefix for reverse proxy (e.g. "/ytdl")
+_raw_prefix = os.environ.get("URL_PREFIX", "").strip("/")
+URL_PREFIX = f"/{_raw_prefix}" if _raw_prefix else ""
