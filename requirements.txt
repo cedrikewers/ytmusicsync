@@ -1,0 +1,8 @@
+ytmusicapi>=1.9.0
+yt-dlp>=2025.1.0
+mutagen>=1.47.0
+flask>=3.1.0
+flask-sock>=0.7.0
+APScheduler>=3.11.0
+unidecode>=1.4.0
+requests>=2.32.0

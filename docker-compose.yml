@@ -1,0 +1,21 @@
+services:
+  ytmusic-jellyfin:
+    build: .
+    container_name: ytmusic-jellyfin
+    restart: unless-stopped
+    ports:
+      - "5023:5023"
+    volumes:
+      # Jellyfin music library
+      - /home/cedrik/docker-local-files/jellyfin/library/Music:/music
+      # Persistent data (artists.json, ignore.txt, logs, cookies)
+      - ./data:/data
+    environment:
+      - MUSIC_LIBRARY_DIR=/music
+      - DATA_DIR=/data
+      - WEB_PORT=5023
+      - CHECK_INTERVAL_HOURS=6
+      - LOOKBACK_DAYS=3
+      - LOG_LEVEL=INFO
+      # Uncomment if you have a cookies file in ./data/
+      # - COOKIE_FILE=/data/music.youtube.com_cookies.txt

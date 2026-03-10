@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YT Music Downloader</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f4f4;
+            margin: 0;
+            padding: 0;
+        }
+
+        .layout {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            max-width: 1100px;
+            margin: 24px auto;
+            padding: 0 16px 24px;
+            justify-items: center;
+        }
+
+        .layout.single {
+            grid-template-columns: 1fr;
+            justify-items: center;
+        }
+
+        .container {
+            background: #fff;
+            padding: 24px 32px 32px 32px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            max-width: 560px;
+            width: 100%;
+        }
+
+        h1 { text-align: center; color: #333; }
+        h2 { color: #333; margin-top: 24px; }
+        label { font-weight: bold; }
+
+        textarea {
+            width: 100%;
+            min-height: 80px;
+            margin: 8px 0 16px 0;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            font-size: 1em;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            font-size: 1em;
+            margin: 8px 0;
+        }
+
+        button {
+            background: #ff0000;
+            color: #fff;
+            border: none;
+            padding: 10px 24px;
+            border-radius: 4px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        button:hover { background: #cc0000; }
+
+        .btn-secondary {
+            background: #555;
+        }
+        .btn-secondary:hover { background: #333; }
+
+        .btn-small {
+            padding: 4px 12px;
+            font-size: 0.85em;
+        }
+
+        .btn-danger {
+            background: #d32f2f;
+        }
+        .btn-danger:hover { background: #b71c1c; }
+
+        .progress-section { margin-top: 32px; }
+        .progress-list { list-style: none; padding: 0; }
+        .progress-item { background: #f9f9f9; margin-bottom: 10px; padding: 10px; border-radius: 4px; border-left: 4px solid #ff0000; }
+        .status { font-size: 0.95em; color: #555; }
+
+        .artist-section { margin-top: 24px; }
+        .artist-list { list-style: none; padding: 0; }
+        .artist-item {
+            background: #f9f9f9;
+            margin-bottom: 6px;
+            padding: 8px 12px;
+            border-radius: 4px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .artist-item .name { font-weight: bold; }
+
+        .search-results { list-style: none; padding: 0; margin-top: 8px; }
+        .search-result-item {
+            background: #eef;
+            margin-bottom: 4px;
+            padding: 8px 12px;
+            border-radius: 4px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .log-panel {
+            background: #0b1020;
+            color: #e8eaf6;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            min-height: 400px;
+            max-height: 70vh;
+        }
+
+        .log-panel.collapsed { display: none; }
+
+        .log-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .log-title { margin: 0; font-size: 1.1rem; color: #bbdefb; }
+        .log-controls { display: flex; gap: 8px; }
+        .log-controls button { background: #263238; color: #eceff1; border: 1px solid #455a64; padding: 4px 10px; border-radius: 4px; cursor: pointer; }
+        .log-controls button:hover { background: #37474f; }
+        .log-body { background: #0e1628; border: 1px solid #1e2a44; border-radius: 6px; padding: 10px; overflow: auto; white-space: pre-wrap; word-break: break-word; flex: 1; }
+        .log-line { line-height: 1.4; }
+        .log-muted { color: #90a4ae; }
+
+        .log-toggle {
+            position: fixed;
+            right: 16px;
+            bottom: 16px;
+            z-index: 1000;
+            background: #263238;
+            color: #eceff1;
+            border: 1px solid #455a64;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        @media (max-width: 900px) {
+            .layout { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="layout">
+        <div class="container">
+            <h1>YT Music Downloader</h1>
+
+            <!-- Download section -->
+            <form id="download-form">
+                <label for="urls">YouTube Music URLs (one per line):</label>
+                <textarea id="urls" name="urls"
+                    placeholder="https://music.youtube.com/watch?v=abcdef&#10;https://music.youtube.com/browse/MPREb_xyz"></textarea>
+                <button type="submit">Download</button>
+            </form>
+
+            <div class="progress-section">
+                <h2>Download Progress</h2>
+                <ul id="progress-list" class="progress-list"></ul>
+            </div>
+
+            <!-- Artist management section -->
+            <div class="artist-section">
+                <h2>Followed Artists</h2>
+                <div style="display:flex; gap:8px; margin-bottom:8px;">
+                    <button class="btn-secondary btn-small" id="btn-check-now">Check for new releases now</button>
+                </div>
+                <ul id="artist-list" class="artist-list">
+                    {% for artist in artists %}
+                    <li class="artist-item" data-id="{{ artist.channelId }}">
+                        <span class="name">{{ artist.name }}</span>
+                        <button class="btn-danger btn-small btn-remove-artist">Remove</button>
+                    </li>
+                    {% endfor %}
+                </ul>
+
+                <h3>Add Artist</h3>
+                <div style="display:flex; gap:8px;">
+                    <input type="text" id="artist-search" placeholder="Search artist name...">
+                    <button class="btn-secondary" id="btn-artist-search">Search</button>
+                </div>
+                <ul id="search-results" class="search-results"></ul>
+            </div>
+        </div>
+
+        <div id="log-panel" class="log-panel collapsed">
+            <div class="log-header">
+                <h3 class="log-title">Live Log</h3>
+                <div class="log-controls">
+                    <button id="log-clear">Clear</button>
+                </div>
+            </div>
+            <div id="log-body" class="log-body">
+                <div class="log-line log-muted">Waiting for log output...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    const form = document.getElementById('download-form');
+    const progressList = document.getElementById('progress-list');
+    const logPanel = document.getElementById('log-panel');
+    const layout = document.querySelector('.layout');
+    const logBody = document.getElementById('log-body');
+    const btnClear = document.getElementById('log-clear');
+    const artistList = document.getElementById('artist-list');
+    const searchResults = document.getElementById('search-results');
+    const artistSearchInput = document.getElementById('artist-search');
+    const btnArtistSearch = document.getElementById('btn-artist-search');
+    const btnCheckNow = document.getElementById('btn-check-now');
+
+    // Log toggle
+    const toggle = document.createElement('button');
+    toggle.className = 'log-toggle';
+    toggle.textContent = 'Show Log';
+    document.body.appendChild(toggle);
+
+    // --- Native WebSocket ---
+    const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    let ws = null;
+    const progressHandlers = [];
+
+    function connectWs() {
+        ws = new WebSocket(`${wsProto}//${location.host}/ws`);
+        ws.onmessage = (evt) => {
+            const msg = JSON.parse(evt.data);
+            if (msg.event === 'log') {
+                appendLogLine(msg.line);
+            } else if (msg.event === 'progress') {
+                progressHandlers.forEach(fn => fn(msg));
+            }
+            // ignore 'ping'
+        };
+        ws.onclose = () => setTimeout(connectWs, 2000);
+        ws.onerror = () => ws.close();
+    }
+    connectWs();
+
+    layout.classList.add('single');
+
+    // --- Download form ---
+    form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const urls = document.getElementById('urls').value.split('\n').map(u => u.trim()).filter(Boolean);
+        if (urls.length === 0) return;
+
+        const existingUrls = Array.from(progressList.children).map(li => li.querySelector('strong')?.textContent);
+
+        fetch('/queue', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ urls })
+        });
+
+        urls.forEach(url => {
+            if (existingUrls.includes(url)) return;
+            const li = document.createElement('li');
+            li.className = 'progress-item';
+            li.innerHTML = `<div><strong>${url}</strong></div><div class="status">Waiting...</div>`;
+            progressList.appendChild(li);
+
+            const updateHandler = data => {
+                if (data.url === url) {
+                    li.querySelector('.status').textContent = data.status;
+                    if (data.status === 'Completed' || data.status === 'Error') {
+                        const idx = progressHandlers.indexOf(updateHandler);
+                        if (idx !== -1) progressHandlers.splice(idx, 1);
+                    }
+                }
+            };
+            progressHandlers.push(updateHandler);
+        });
+    });
+
+    // --- Log panel toggle ---
+    toggle.addEventListener('click', () => {
+        const collapsed = logPanel.classList.toggle('collapsed');
+        toggle.textContent = collapsed ? 'Show Log' : 'Hide Log';
+        layout.classList.toggle('single', collapsed);
+        if (!collapsed) {
+            requestAnimationFrame(() => { logBody.scrollTop = logBody.scrollHeight; });
+        }
+    });
+
+    function appendLogLine(text) {
+        const firstChild = logBody.firstElementChild;
+        if (firstChild && firstChild.classList.contains('log-muted')) {
+            logBody.removeChild(firstChild);
+        }
+        const div = document.createElement('div');
+        div.className = 'log-line';
+        div.textContent = text;
+        logBody.appendChild(div);
+        while (logBody.children.length > 1000) {
+            logBody.removeChild(logBody.firstElementChild);
+        }
+        logBody.scrollTop = logBody.scrollHeight;
+    }
+
+    // Log lines are handled in the ws.onmessage handler above
+
+    btnClear.addEventListener('click', () => {
+        logBody.innerHTML = '<div class="log-line log-muted">Cleared.</div>';
+    });
+
+    // --- Artist management ---
+    function attachRemoveHandlers() {
+        document.querySelectorAll('.btn-remove-artist').forEach(btn => {
+            btn.onclick = async function () {
+                const li = btn.closest('.artist-item');
+                const channelId = li.dataset.id;
+                const resp = await fetch(`/artists/${channelId}`, { method: 'DELETE' });
+                if (resp.ok) li.remove();
+            };
+        });
+    }
+    attachRemoveHandlers();
+
+    btnArtistSearch.addEventListener('click', async () => {
+        const q = artistSearchInput.value.trim();
+        if (!q) return;
+        searchResults.innerHTML = '<li class="log-muted">Searching...</li>';
+        const resp = await fetch(`/artists/search?q=${encodeURIComponent(q)}`);
+        const results = await resp.json();
+        searchResults.innerHTML = '';
+        results.forEach(r => {
+            const li = document.createElement('li');
+            li.className = 'search-result-item';
+            li.innerHTML = `<span>${r.name}</span><button class="btn-small">Add</button>`;
+            li.querySelector('button').onclick = async () => {
+                const addResp = await fetch('/artists', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: r.name, channelId: r.channelId })
+                });
+                if (addResp.ok) {
+                    const newLi = document.createElement('li');
+                    newLi.className = 'artist-item';
+                    newLi.dataset.id = r.channelId;
+                    newLi.innerHTML = `<span class="name">${r.name}</span><button class="btn-danger btn-small btn-remove-artist">Remove</button>`;
+                    artistList.appendChild(newLi);
+                    attachRemoveHandlers();
+                    li.remove();
+                }
+            };
+            searchResults.appendChild(li);
+        });
+        if (results.length === 0) {
+            searchResults.innerHTML = '<li class="log-muted">No results found.</li>';
+        }
+    });
+
+    artistSearchInput.addEventListener('keypress', e => {
+        if (e.key === 'Enter') { e.preventDefault(); btnArtistSearch.click(); }
+    });
+
+    btnCheckNow.addEventListener('click', async () => {
+        btnCheckNow.disabled = true;
+        btnCheckNow.textContent = 'Checking...';
+        await fetch('/check-now', { method: 'POST' });
+        setTimeout(() => {
+            btnCheckNow.disabled = false;
+            btnCheckNow.textContent = 'Check for new releases now';
+        }, 5000);
+    });
+    </script>
+</body>
+
+</html>
