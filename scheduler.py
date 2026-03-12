@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timedelta, timezone
+from threading import Thread
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -97,6 +98,13 @@ def check_artists_for_new_releases() -> None:
         logger.info("No new releases found.")
 
 
+def _run_initial_check() -> None:
+    try:
+        check_artists_for_new_releases()
+    except Exception:
+        logger.exception("Initial release check failed")
+
+
 def start(run_immediately: bool = True) -> BackgroundScheduler:
     """Start the background scheduler.
 
@@ -115,11 +123,8 @@ def start(run_immediately: bool = True) -> BackgroundScheduler:
     _scheduler.start()
 
     if run_immediately:
-        logger.info("Running initial release check...")
-        try:
-            check_artists_for_new_releases()
-        except Exception:
-            logger.exception("Initial release check failed")
+        logger.info("Scheduling initial release check in background...")
+        Thread(target=_run_initial_check, daemon=True).start()
 
     logger.info(
         "Scheduler started. Checking every %d hours.", config.CHECK_INTERVAL_HOURS

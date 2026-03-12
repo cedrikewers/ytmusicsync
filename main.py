@@ -215,14 +215,14 @@ def _download_url(url: str):
                     return
                 ws_broadcast("progress", {"url": url, "status": "Downloading..."})
                 downloader.download_single_song(
-                    parsed["id"], album_info, yt_client=yt, progress_cb=progress_cb
+                    parsed["id"], album_info, yt_client=yt, progress_cb=progress_cb, force=True
                 )
 
             elif parsed["type"] == "album":
                 ws_broadcast("progress", {"url": url, "status": "Fetching album info..."})
                 album_info = ytmusic_client.get_album(yt, parsed["id"])
                 ws_broadcast("progress", {"url": url, "status": "Downloading..."})
-                downloader.download_album(album_info, yt_client=yt, progress_cb=progress_cb)
+                downloader.download_album(album_info, yt_client=yt, progress_cb=progress_cb, force=True)
 
             elif parsed["type"] == "playlist":
                 ws_broadcast("progress", {"url": url, "status": "Resolving playlist..."})
@@ -230,7 +230,7 @@ def _download_url(url: str):
                 if browse_id:
                     album_info = ytmusic_client.get_album(yt, browse_id)
                     ws_broadcast("progress", {"url": url, "status": "Downloading..."})
-                    downloader.download_album(album_info, yt_client=yt, progress_cb=progress_cb)
+                    downloader.download_album(album_info, yt_client=yt, progress_cb=progress_cb, force=True)
                 else:
                     ws_broadcast("progress", {"url": url, "status": "Could not resolve playlist"})
                     return

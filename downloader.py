@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import subprocess
 import tempfile
 
@@ -12,6 +13,52 @@ import library
 
 logger = logging.getLogger(__name__)
 
+# --- Multi-artist extraction from song titles ---
+
+_FEAT_BRACKET_RE = re.compile(
+    r'[\(\[]\s*(?:feat\.?|featuring|ft\.?|with)\s+(.+?)\s*[\)\]]',
+    re.IGNORECASE,
+)
+_FEAT_BARE_RE = re.compile(
+    r'\s+(?:feat\.?|featuring|ft\.?|with)\s+(.+?)\s*$',
+    re.IGNORECASE,
+)
+_SPLIT_RE = re.compile(r'\s*(?:,|&|\band\b)\s*')
+
+
+def _extract_featured_artists(title: str) -> list[str]:
+    """Parse featured / collaborating artist names out of a song title."""
+    artists: list[str] = []
+    # Bracketed: "Song (feat. A & B)", "Song [ft. A, B and C]"
+    for m in _FEAT_BRACKET_RE.finditer(title):
+        artists.extend(p for p in _SPLIT_RE.split(m.group(1)) if p)
+    # Bare (no brackets): "Song feat. A & B" — only if no bracket match
+    if not artists:
+        m = _FEAT_BARE_RE.search(title)
+        if m:
+            artists.extend(p for p in _SPLIT_RE.split(m.group(1)) if p)
+    return [a.strip() for a in artists if a.strip()]
+
+
+def _collect_all_artists(track_artists: list[str], title: str) -> list[str]:
+    """Merge API-provided artists with any extra names parsed from the title.
+
+    Deduplicates case-insensitively while preserving the original casing
+    of the first occurrence.
+    """
+    seen: dict[str, str] = {}  # lowercase -> original
+    for name in track_artists:
+        key = name.strip().lower()
+        if key and key not in seen:
+            seen[key] = name.strip()
+
+    for name in _extract_featured_artists(title):
+        key = name.lower()
+        if key and key not in seen:
+            seen[key] = name
+
+    return list(seen.values()) or track_artists or ["Unknown Artist"]
+
 
 def make_directory_name(album_title: str, artist_name: str) -> str:
     """Generate the Jellyfin-compatible directory name.
@@ -23,17 +70,18 @@ def make_directory_name(album_title: str, artist_name: str) -> str:
     return "".join(c for c in unidecode(raw) if c.isalnum())
 
 
-def download_album(album_info: dict, yt_client=None, progress_cb=None) -> bool:
+def download_album(album_info: dict, yt_client=None, progress_cb=None, force: bool = False) -> bool:
     """Download all tracks of an album to the Jellyfin library.
 
     Args:
         album_info: dict from ytmusic_client.get_album()
         yt_client: YTMusic instance (for lyrics lookup)
         progress_cb: optional callable(message: str) for progress updates
+        force: if True, skip the is_downloaded check (for manual downloads)
 
     Returns True if anything was downloaded.
     """
-    from ytmusic_client import get_lyrics, best_thumbnail_url
+    from ytmusic_client import get_lyrics, get_release_date, best_thumbnail_url
 
     album_title = album_info["title"]
     album_artist = album_info.get("albumArtist", "Unknown Artist")
@@ -45,7 +93,7 @@ def download_album(album_info: dict, yt_client=None, progress_cb=None) -> bool:
 
     dir_name = make_directory_name(album_title, album_artist)
 
-    if library.is_downloaded(dir_name):
+    if not force and library.is_downloaded(dir_name):
         logger.info("Already downloaded: %s", dir_name)
         return False
 
@@ -83,6 +131,7 @@ def download_album(album_info: dict, yt_client=None, progress_cb=None) -> bool:
         track_title = track.get("title", "Unknown")
         track_number = track.get("trackNumber", 0)
         track_artists = track.get("artists", artists_list)
+        all_artists = _collect_all_artists(track_artists, track_title)
 
         # yt-dlp output template: TrackNumber - Title.m4a
         safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in track_title)
@@ -100,23 +149,29 @@ def download_album(album_info: dict, yt_client=None, progress_cb=None) -> bool:
 
         any_downloaded = True
 
-        # Get lyrics
+        # Get lyrics and precise release date
         lyrics = None
+        release_date_str = ""
         if yt_client:
             lyrics = get_lyrics(yt_client, video_id)
+            rd = get_release_date(yt_client, video_id)
+            if rd:
+                release_date_str = rd.strftime("%Y-%m-%d")
+        if not release_date_str:
+            release_date_str = f"{year}-01-01" if year and len(year) == 4 else (year or "")
 
         # Tag the file
         _tag_m4a(
             filepath=out_path,
             title=track_title,
-            artist=", ".join(track_artists),
+            artists=all_artists,
             album=album_title,
             album_artist=album_artist,
             track_number=track_number,
             track_total=track_count,
             disc_number=1,
             disc_total=1,
-            date=f"{year}-01-01" if year and len(year) == 4 else (year or ""),
+            date=release_date_str,
             lyrics=lyrics,
             cover_data=cover_data,
         )
@@ -131,7 +186,7 @@ def download_album(album_info: dict, yt_client=None, progress_cb=None) -> bool:
     return any_downloaded
 
 
-def download_single_song(video_id: str, album_info: dict, yt_client=None, progress_cb=None) -> bool:
+def download_single_song(video_id: str, album_info: dict, yt_client=None, progress_cb=None, force: bool = False) -> bool:
     """Download a single song given its videoId and album context.
 
     album_info should come from ytmusic_client.get_album() or get_song_album_info().
@@ -147,13 +202,13 @@ def download_single_song(video_id: str, album_info: dict, yt_client=None, progre
     if target is None:
         # If the song isn't found in the track list, download the whole album
         logger.info("Song %s not matched in album tracks, downloading full album", video_id)
-        return download_album(album_info, yt_client, progress_cb)
+        return download_album(album_info, yt_client, progress_cb, force=force)
 
     # Build a single-track album_info to reuse download_album
     single_info = dict(album_info)
     single_info["tracks"] = [target]
     single_info["trackCount"] = album_info.get("trackCount", 1)
-    return download_album(single_info, yt_client, progress_cb)
+    return download_album(single_info, yt_client, progress_cb, force=force)
 
 
 def _download_track(video_id: str, out_path: str) -> bool:
@@ -196,7 +251,7 @@ def _download_track(video_id: str, out_path: str) -> bool:
 def _tag_m4a(
     filepath: str,
     title: str,
-    artist: str,
+    artists: list[str],
     album: str,
     album_artist: str,
     track_number: int,
@@ -214,9 +269,9 @@ def _tag_m4a(
         logger.error("Failed to open %s for tagging", filepath)
         return
 
-    audio["\u00a9nam"] = [title]              # Title
-    audio["\u00a9ART"] = [artist]             # Artist
-    audio["\u00a9alb"] = [album]              # Album
+    audio["\u00a9nam"] = [title]                          # Title
+    audio["\u00a9ART"] = artists                              # Artist (one tag per artist)
+    audio["\u00a9alb"] = [album]                          # Album
     audio["aART"] = [album_artist]            # Album Artist
     audio["trkn"] = [(track_number, track_total)]  # Track Number
     audio["disk"] = [(disc_number, disc_total)]    # Disc Number
