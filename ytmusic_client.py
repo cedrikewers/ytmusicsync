@@ -8,6 +8,162 @@ from ytmusicapi import YTMusic
 logger = logging.getLogger(__name__)
 
 
+def _is_audio_video_type(video_type: str | None) -> bool:
+    """Return True for audio/studio track entries from YT Music."""
+    if not video_type:
+        return True
+    return "ATV" in video_type.upper()
+
+
+def _norm_title(title: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", (title or "").lower())).strip()
+
+
+def _clean_title_for_song_search(title: str, artist: str | None = None) -> str:
+    """Conservative cleanup for MV-like suffixes in song titles."""
+    t = (title or "").strip()
+
+    # Remove common trailing MV markers but keep core title tokens intact.
+    t = re.sub(r"\s*(official\s+)?(music\s+video|mv)\s*$", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"\s*\[[^\]]*\]\s*$", "", t)
+    t = re.sub(r"\s*\([^\)]*\)\s*$", "", t)
+    t = t.strip(" '\"-_")
+    return t or title
+
+
+def _find_best_studio_song_id_by_search(yt: YTMusic, title: str, artist: str) -> str | None:
+    """Search song catalog and pick best candidate for studio/audio version."""
+    cleaned = _clean_title_for_song_search(title, artist)
+    query_candidates = [
+        f"{title} {artist}".strip(),
+        f"{cleaned} {artist}".strip(),
+    ]
+
+    seen_ids: set[str] = set()
+    candidates: list[dict] = []
+
+    for query in query_candidates:
+        if not query:
+            continue
+        try:
+            results = yt.search(query, filter="songs", limit=20)
+        except Exception:
+            logger.debug("Song search failed for query %s", query)
+            continue
+
+        for r in results:
+            rid = r.get("videoId")
+            if not rid or rid in seen_ids:
+                continue
+            seen_ids.add(rid)
+            candidates.append(r)
+
+    if not candidates:
+        return None
+
+    wanted_artist = _norm_title(artist)
+    wanted_title_variants = {
+        _norm_title(title),
+        _norm_title(cleaned),
+    }
+    wanted_title_variants.discard("")
+
+    best_id = None
+    best_score = -1
+
+    for r in candidates:
+        rid = r.get("videoId")
+        if not rid:
+            continue
+
+        # Validate candidate as audio/studio from canonical song metadata.
+        try:
+            song = yt.get_song(rid)
+            details = song.get("videoDetails", {})
+            vtype = (details.get("musicVideoType") or "").upper()
+            if not _is_audio_video_type(vtype):
+                continue
+            c_title = _norm_title(details.get("title", "") or r.get("title", ""))
+            c_artist = _norm_title(details.get("author", ""))
+        except Exception:
+            c_title = _norm_title(r.get("title", ""))
+            artists = [_norm_title(a.get("name", "")) for a in r.get("artists", []) if a.get("name")]
+            c_artist = artists[0] if artists else ""
+
+        score = 0
+        if c_title in wanted_title_variants:
+            score += 4
+        elif any(v and v in c_title for v in wanted_title_variants):
+            score += 1
+
+        if wanted_artist and c_artist == wanted_artist:
+            score += 4
+        elif wanted_artist and wanted_artist in c_artist:
+            score += 2
+
+        if score > best_score:
+            best_score = score
+            best_id = rid
+
+    return best_id if best_score >= 4 else None
+
+
+def _ensure_album_contains_track(album_info: dict, video_id: str, title: str, artist: str) -> dict:
+    """Ensure album_info has a track with video_id so single-song download can match it."""
+    updated = dict(album_info)
+    tracks = [dict(t) for t in album_info.get("tracks", [])]
+
+    if any(t.get("videoId") == video_id for t in tracks):
+        updated["tracks"] = tracks
+        return updated
+
+    wanted = _norm_title(_clean_title_for_song_search(title, artist))
+    replace_idx = None
+    for i, t in enumerate(tracks):
+        if _norm_title(t.get("title", "")) == wanted:
+            replace_idx = i
+            break
+
+    new_track = {
+        "videoId": video_id,
+        "title": title or (tracks[replace_idx].get("title") if replace_idx is not None else "Unknown"),
+        "artists": [artist] if artist else (tracks[replace_idx].get("artists", []) if replace_idx is not None else []),
+        "trackNumber": tracks[replace_idx].get("trackNumber", 1) if replace_idx is not None else 1,
+        "duration_seconds": tracks[replace_idx].get("duration_seconds", 0) if replace_idx is not None else 0,
+        "isAvailable": True,
+        "videoType": "MUSIC_VIDEO_TYPE_ATV",
+    }
+
+    if replace_idx is not None:
+        tracks[replace_idx] = new_track
+    else:
+        tracks.insert(0, new_track)
+
+    updated["tracks"] = tracks
+    return updated
+
+
+def _pick_best_album_track_video_id(album_tracks: list[dict], requested_title: str) -> str | None:
+    """Pick the best matching audio/studio track videoId from album tracks."""
+    if not album_tracks:
+        return None
+
+    audio_tracks = [t for t in album_tracks if _is_audio_video_type(t.get("videoType"))]
+    candidates = audio_tracks or album_tracks
+    wanted = _norm_title(requested_title)
+
+    if wanted:
+        for t in candidates:
+            if _norm_title(t.get("title", "")) == wanted and t.get("videoId"):
+                return t["videoId"]
+
+    for t in candidates:
+        if t.get("videoId"):
+            return t["videoId"]
+
+    return None
+
+
 def create_client() -> YTMusic:
     return YTMusic()
 
@@ -87,6 +243,7 @@ def get_album(yt: YTMusic, browse_id: str) -> dict:
                 "trackNumber": t.get("trackNumber", 0),
                 "duration_seconds": t.get("duration_seconds", 0),
                 "isAvailable": t.get("isAvailable", True),
+                "videoType": t.get("videoType"),
             }
         )
 
@@ -220,3 +377,101 @@ def get_song_album_info(yt: YTMusic, video_id: str) -> dict | None:
         return get_album(yt, browse_id)
 
     return None
+
+
+def resolve_song_download_target(yt: YTMusic, video_id: str) -> dict | None:
+    """Resolve a song URL videoId to an album and preferred studio/audio videoId.
+
+    This handles grouped watch pages where the requested id can be a music-video
+    variant while an album audio track exists.
+    """
+    try:
+        song = yt.get_song(video_id)
+    except Exception:
+        logger.debug("Could not load song metadata for %s", video_id)
+        return None
+
+    video_details = song.get("videoDetails", {})
+    requested_title = video_details.get("title", "")
+    requested_artist = video_details.get("author", "")
+    requested_type = (video_details.get("musicVideoType") or "").upper()
+
+    selected_video_id = video_id
+    if requested_type and not _is_audio_video_type(requested_type):
+        found = _find_best_studio_song_id_by_search(yt, requested_title, requested_artist)
+        if found:
+            selected_video_id = found
+
+    selected_title = requested_title
+    selected_artist = requested_artist
+    if selected_video_id != video_id:
+        try:
+            selected_song = yt.get_song(selected_video_id)
+            selected_details = selected_song.get("videoDetails", {})
+            selected_title = selected_details.get("title", selected_title)
+            selected_artist = selected_details.get("author", selected_artist)
+        except Exception:
+            logger.debug("Could not load selected song metadata for %s", selected_video_id)
+
+    album_info = get_song_album_info(yt, selected_video_id)
+    if album_info:
+        album_info = _ensure_album_contains_track(album_info, selected_video_id, selected_title, selected_artist)
+        return {"albumInfo": album_info, "videoId": selected_video_id}
+
+    try:
+        watch = yt.get_watch_playlist(selected_video_id)
+    except Exception:
+        logger.debug("Could not load watch playlist for %s", selected_video_id)
+        return None
+
+    tracks = watch.get("tracks") or []
+    if not tracks:
+        return None
+
+    requested_track = None
+    preferred_track = None
+    fallback_track = None
+
+    for t in tracks:
+        tid = t.get("videoId")
+        album_data = t.get("album") or {}
+        album_id = album_data.get("id")
+        if not tid or not album_id:
+            continue
+
+        if tid == selected_video_id and requested_track is None:
+            requested_track = t
+
+        if fallback_track is None:
+            fallback_track = t
+
+        if _is_audio_video_type(t.get("videoType")):
+            preferred_track = t
+            break
+
+    selected = preferred_track or requested_track or fallback_track
+    if not selected:
+        return None
+
+    browse_id = (selected.get("album") or {}).get("id")
+    if not browse_id:
+        return None
+
+    album_info = get_album(yt, browse_id)
+    album_tracks = album_info.get("tracks", [])
+
+    requested_title = (requested_track or selected).get("title", "")
+    selected_video_id = selected.get("videoId") or selected_video_id
+    album_track = next((t for t in album_tracks if t.get("videoId") == selected_video_id), None)
+
+    if album_track is None:
+        album_info = _ensure_album_contains_track(album_info, selected_video_id, selected_title, selected_artist)
+        return {"albumInfo": album_info, "videoId": selected_video_id}
+
+    if not _is_audio_video_type(album_track.get("videoType")):
+        best_video_id = _pick_best_album_track_video_id(album_tracks, requested_title)
+        if best_video_id:
+            selected_video_id = best_video_id
+
+    album_info = _ensure_album_contains_track(album_info, selected_video_id, selected_title, selected_artist)
+    return {"albumInfo": album_info, "videoId": selected_video_id}

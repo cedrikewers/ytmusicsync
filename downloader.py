@@ -81,7 +81,12 @@ def download_album(album_info: dict, yt_client=None, progress_cb=None, force: bo
 
     Returns True if anything was downloaded.
     """
-    from ytmusic_client import get_lyrics, get_release_date, best_thumbnail_url
+    from ytmusic_client import (
+        get_lyrics,
+        get_release_date,
+        best_thumbnail_url,
+        resolve_song_download_target,
+    )
 
     album_title = album_info["title"]
     album_artist = album_info.get("albumArtist", "Unknown Artist")
@@ -119,10 +124,49 @@ def download_album(album_info: dict, yt_client=None, progress_cb=None, force: bo
     any_downloaded = False
 
     for track in tracks:
-        video_id = track.get("videoId")
-        if not video_id:
+        source_video_id = track.get("videoId")
+        if not source_video_id:
             logger.warning("Skipping track with no videoId: %s", track.get("title"))
             continue
+
+        video_id = source_video_id
+
+        video_type = (track.get("videoType") or "").upper()
+        if video_type and "ATV" not in video_type:
+            if yt_client is None:
+                logger.info(
+                    "Skipping non-studio/non-audio track variant %s (%s) because no YT client is available for resolution",
+                    track.get("title", "Unknown"),
+                    track.get("videoType"),
+                )
+                continue
+
+            try:
+                resolved = resolve_song_download_target(yt_client, source_video_id)
+            except Exception:
+                logger.exception(
+                    "Failed resolving non-studio/non-audio track variant %s (%s)",
+                    track.get("title", "Unknown"),
+                    source_video_id,
+                )
+                resolved = None
+
+            resolved_video_id = resolved.get("videoId") if resolved else None
+            if not resolved_video_id:
+                logger.info(
+                    "Skipping non-studio/non-audio track variant %s (%s): could not resolve studio version",
+                    track.get("title", "Unknown"),
+                    source_video_id,
+                )
+                continue
+
+            video_id = resolved_video_id
+            logger.info(
+                "Resolved non-studio/non-audio track variant %s: %s -> %s",
+                track.get("title", "Unknown"),
+                source_video_id,
+                video_id,
+            )
 
         if not track.get("isAvailable", True):
             logger.warning("Skipping unavailable track: %s", track.get("title"))

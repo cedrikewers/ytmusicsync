@@ -209,13 +209,17 @@ def _download_url(url: str):
         with download_lock:
             if parsed["type"] == "song":
                 ws_broadcast("progress", {"url": url, "status": "Fetching song info..."})
-                album_info = ytmusic_client.get_song_album_info(yt, parsed["id"])
-                if album_info is None:
+                target = ytmusic_client.resolve_song_download_target(yt, parsed["id"])
+                if target is None:
                     ws_broadcast("progress", {"url": url, "status": "Could not resolve song"})
                     return
                 ws_broadcast("progress", {"url": url, "status": "Downloading..."})
                 downloader.download_single_song(
-                    parsed["id"], album_info, yt_client=yt, progress_cb=progress_cb, force=True
+                    target["videoId"],
+                    target["albumInfo"],
+                    yt_client=yt,
+                    progress_cb=progress_cb,
+                    force=True,
                 )
 
             elif parsed["type"] == "album":
