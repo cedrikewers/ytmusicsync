@@ -7,57 +7,12 @@ import tempfile
 import requests
 from mutagen.mp4 import MP4, MP4Cover
 from unidecode import unidecode
+from ytmusicapi import YTMusic
 
 import config
 import library
 
 logger = logging.getLogger(__name__)
-
-# --- Multi-artist extraction from song titles ---
-
-_FEAT_BRACKET_RE = re.compile(
-    r'[\(\[]\s*(?:feat\.?|featuring|ft\.?|with)\s+(.+?)\s*[\)\]]',
-    re.IGNORECASE,
-)
-_FEAT_BARE_RE = re.compile(
-    r'\s+(?:feat\.?|featuring|ft\.?|with)\s+(.+?)\s*$',
-    re.IGNORECASE,
-)
-_SPLIT_RE = re.compile(r'\s*(?:,|&|\band\b)\s*')
-
-
-def _extract_featured_artists(title: str) -> list[str]:
-    """Parse featured / collaborating artist names out of a song title."""
-    artists: list[str] = []
-    # Bracketed: "Song (feat. A & B)", "Song [ft. A, B and C]"
-    for m in _FEAT_BRACKET_RE.finditer(title):
-        artists.extend(p for p in _SPLIT_RE.split(m.group(1)) if p)
-    # Bare (no brackets): "Song feat. A & B" — only if no bracket match
-    if not artists:
-        m = _FEAT_BARE_RE.search(title)
-        if m:
-            artists.extend(p for p in _SPLIT_RE.split(m.group(1)) if p)
-    return [a.strip() for a in artists if a.strip()]
-
-
-def _collect_all_artists(track_artists: list[str], title: str) -> list[str]:
-    """Merge API-provided artists with any extra names parsed from the title.
-
-    Deduplicates case-insensitively while preserving the original casing
-    of the first occurrence.
-    """
-    seen: dict[str, str] = {}  # lowercase -> original
-    for name in track_artists:
-        key = name.strip().lower()
-        if key and key not in seen:
-            seen[key] = name.strip()
-
-    for name in _extract_featured_artists(title):
-        key = name.lower()
-        if key and key not in seen:
-            seen[key] = name
-
-    return list(seen.values()) or track_artists or ["Unknown Artist"]
 
 
 def make_directory_name(album_title: str, artist_name: str) -> str:
@@ -70,7 +25,7 @@ def make_directory_name(album_title: str, artist_name: str) -> str:
     return "".join(c for c in unidecode(raw) if c.isalnum())
 
 
-def download_album(album_info: dict, yt_client=None, progress_cb=None, force: bool = False) -> bool:
+def download_album(album_info: dict, yt_client: YTMusic | None = None, progress_cb=None, force: bool = False) -> bool:
     """Download all tracks of an album to the Jellyfin library.
 
     Args:
@@ -175,7 +130,11 @@ def download_album(album_info: dict, yt_client=None, progress_cb=None, force: bo
         track_title = track.get("title", "Unknown")
         track_number = track.get("trackNumber", 0)
         track_artists = track.get("artists", artists_list)
-        all_artists = _collect_all_artists(track_artists, track_title)
+        credited_artists = []
+        if (credits_browse_id := track.get("creditsBrowseId")) and yt_client:
+            credits = yt_client.get_song_credits(credits_browse_id)
+            credited_artists = credits.get("performed_by", {}).get("data", [])
+        all_artists = track_artists if len(track_artists) >= len(credited_artists) else credited_artists
 
         # yt-dlp output template: TrackNumber - Title.m4a
         safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in track_title)

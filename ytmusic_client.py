@@ -132,6 +132,9 @@ def _ensure_album_contains_track(album_info: dict, video_id: str, title: str, ar
         "duration_seconds": tracks[replace_idx].get("duration_seconds", 0) if replace_idx is not None else 0,
         "isAvailable": True,
         "videoType": "MUSIC_VIDEO_TYPE_ATV",
+        "creditsBrowseId": tracks[replace_idx].get("creditsBrowseId") if replace_idx is not None \
+            else (tracks[0].get("creditsBrowseId") if tracks and len(tracks) == 1 \
+            else None)
     }
 
     if replace_idx is not None:
@@ -244,6 +247,7 @@ def get_album(yt: YTMusic, browse_id: str) -> dict:
                 "duration_seconds": t.get("duration_seconds", 0),
                 "isAvailable": t.get("isAvailable", True),
                 "videoType": t.get("videoType"),
+                "creditsBrowseId": t.get("creditsBrowseId"),
             }
         )
 

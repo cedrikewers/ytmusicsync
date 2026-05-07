@@ -213,6 +213,9 @@ def _download_url(url: str):
                 if target is None:
                     ws_broadcast("progress", {"url": url, "status": "Could not resolve song"})
                     return
+                if len(target) > 1 and target["albumInfo"]["tracks"][0].get("creditsBrowseId") is None \
+                    and (originalTrackCreditsBrowseId := target["albumInfo"]["tracks"][1].get("creditsBrowseId")):
+                    target["albumInfo"]["tracks"][0]["creditsBrowseId"] = originalTrackCreditsBrowseId
                 ws_broadcast("progress", {"url": url, "status": "Downloading..."})
                 downloader.download_single_song(
                     target["videoId"],
