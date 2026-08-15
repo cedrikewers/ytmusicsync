@@ -19,4 +19,4 @@ services:
       - LOG_LEVEL=INFO
       - URL_PREFIX=/ytdl
       # Uncomment if you have a cookies file in ./data/
-      # - COOKIE_FILE=/data/music.youtube.com_cookies.txt
+      - COOKIE_FILE=/data/cookies.txt

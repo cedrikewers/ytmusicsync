@@ -217,9 +217,12 @@ def download_single_song(video_id: str, album_info: dict, yt_client=None, progre
 def _download_track(video_id: str, out_path: str) -> bool:
     """Download a single track using yt-dlp. Returns True on success."""
     url = f"https://music.youtube.com/watch?v={video_id}"
+    
+    deno = os.environ.get("DENO_INSTALL", "/root/.deno/bin")
 
     cmd = [
         "yt-dlp",
+        "--js-runtimes", f"deno:{deno}",
         "--extract-audio",
         "--audio-format", "m4a",
         "--audio-quality", "0",
