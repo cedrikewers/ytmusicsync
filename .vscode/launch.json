@@ -11,7 +11,11 @@
             "module": "flask",
             "env": {
                 "FLASK_APP": "main.py",
-                "FLASK_DEBUG": "1"
+                "FLASK_DEBUG": "1",
+                "URL_PREFIX": "/ytdl",
+                "MUSIC_LIBRARY_DIR": "/tmp/music",
+                "DATA_DIR": "/tmp/data",
+                "WEB_PORT": "5023"
             },
             "args": [
                 "run",
