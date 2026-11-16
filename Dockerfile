@@ -1,3 +1,10 @@
+FROM node:22-slim AS frontend
+WORKDIR /frontend
+COPY frontend/package.json ./
+RUN npm install
+COPY frontend/ ./
+RUN npm run build
+
 FROM python:3.14-slim
 
 RUN apt-get update && \
@@ -15,6 +22,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync
 
 COPY . .
+COPY --from=frontend /frontend/dist ./frontend/dist
 
 # Create default directories
 RUN mkdir -p /data /music

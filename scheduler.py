@@ -86,7 +86,7 @@ def check_artists_for_new_releases() -> None:
 
             # Download
             try:
-                downloaded = downloader.download_album(album_info, yt_client=yt)
+                downloaded = downloader.download_album(album_info, yt_client=yt, track_pending=True)
                 if downloaded:
                     total_downloaded += 1
             except Exception:

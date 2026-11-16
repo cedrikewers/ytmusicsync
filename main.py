@@ -7,12 +7,13 @@ from collections import deque
 from queue import Queue, Empty
 from threading import Lock, Thread
 
-from flask import Flask, Blueprint, request, jsonify, render_template
+from flask import Flask, Blueprint, Response, request, jsonify, send_from_directory
 from flask_sock import Sock
 
 import config
 import downloader
 import library
+import pending
 import scheduler
 import ytmusic_client
 
@@ -185,10 +186,79 @@ def ws_handler(ws):
 # --- Routes ---
 
 
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
+
+
 @bp.route("/", methods=["GET"])
 def index():
-    artists = library.load_artists()
-    return render_template("index.jinja", artists=artists, prefix=config.URL_PREFIX)
+    try:
+        with open(os.path.join(FRONTEND_DIR, "index.html"), encoding="utf-8") as f:
+            html = f.read()
+    except FileNotFoundError:
+        return "Frontend not built. Run `npm run build` in frontend/.", 503
+    # Placeholder baked in at build time so assets and API calls honour URL_PREFIX.
+    return Response(html.replace("/__PREFIX__", config.URL_PREFIX), mimetype="text/html")
+
+
+@bp.route("/assets/<path:filename>", methods=["GET"])
+def frontend_assets(filename):
+    return send_from_directory(os.path.join(FRONTEND_DIR, "assets"), filename)
+
+
+# --- Pending (new release review) API ---
+
+
+@bp.route("/pending", methods=["GET"])
+def list_pending():
+    return jsonify(pending.list_grouped())
+
+
+@bp.route("/pending/cover/<dir_name>", methods=["GET"])
+def pending_cover(dir_name):
+    result = pending.cover(dir_name)
+    if result is None:
+        return jsonify({"error": "No cover"}), 404
+    data, mime = result
+    return Response(data, mimetype=mime, headers={"Cache-Control": "max-age=3600"})
+
+
+@bp.route("/pending/replace", methods=["POST"])
+def pending_replace():
+    data = request.get_json() or {}
+    dir_name, filename, url = data.get("dir", ""), data.get("file", ""), data.get("url", "").strip()
+    if not dir_name or not filename or not url:
+        return jsonify({"error": "dir, file and url required"}), 400
+    try:
+        with download_lock:
+            pending.replace_audio(dir_name, filename, url)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except LookupError as e:
+        return jsonify({"error": str(e)}), 404
+    except Exception as e:
+        logger.exception("Replace failed for %s/%s", dir_name, filename)
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"replaced": True})
+
+
+@bp.route("/pending/delete", methods=["POST"])
+def pending_delete():
+    data = request.get_json() or {}
+    dir_name, filename = data.get("dir", ""), data.get("file") or None
+    if not dir_name:
+        return jsonify({"error": "dir required"}), 400
+    try:
+        pending.delete(dir_name, filename)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"deleted": True})
+
+
+@bp.route("/pending/dismiss", methods=["POST"])
+def pending_dismiss():
+    data = request.get_json() or {}
+    count = pending.dismiss(data.get("dir") or None, data.get("file") or None)
+    return jsonify({"dismissed": count})
 
 
 def _download_url(url: str):
@@ -216,7 +286,12 @@ def _download_url(url: str):
                 if len(target) > 1 and target["albumInfo"]["tracks"][0].get("creditsBrowseId") is None \
                     and (originalTrackCreditsBrowseId := target["albumInfo"]["tracks"][1].get("creditsBrowseId")):
                     target["albumInfo"]["tracks"][0]["creditsBrowseId"] = originalTrackCreditsBrowseId
-                ws_broadcast("progress", {"url": url, "status": "Downloading..."})
+                track = next((t for t in target["albumInfo"].get("tracks", []) if t.get("videoId") == target["videoId"]), None)
+                if track:
+                    artists = ", ".join(track.get("artists") or [])
+                    ws_broadcast("progress", {"url": url, "title": f"{track.get('title', 'Unknown')}{' - ' + artists if artists else ''}", "status": "Downloading..."})
+                else:
+                    ws_broadcast("progress", {"url": url, "status": "Downloading..."})
                 downloader.download_single_song(
                     target["videoId"],
                     target["albumInfo"],
@@ -228,16 +303,16 @@ def _download_url(url: str):
             elif parsed["type"] == "album":
                 ws_broadcast("progress", {"url": url, "status": "Fetching album info..."})
                 album_info = ytmusic_client.get_album(yt, parsed["id"])
-                ws_broadcast("progress", {"url": url, "status": "Downloading..."})
-                downloader.download_album(album_info, yt_client=yt, progress_cb=progress_cb, force=True)
+                ws_broadcast("progress", {"url": url, "title": f"{album_info['title']} - {album_info.get('albumArtist', '')}", "status": "Downloading..."})
+                downloader.download_album(album_info, yt_client=yt, progress_cb=progress_cb, force=True, track_pending=True)
 
             elif parsed["type"] == "playlist":
                 ws_broadcast("progress", {"url": url, "status": "Resolving playlist..."})
                 browse_id = ytmusic_client.get_album_browse_id_from_playlist(yt, parsed["id"])
                 if browse_id:
                     album_info = ytmusic_client.get_album(yt, browse_id)
-                    ws_broadcast("progress", {"url": url, "status": "Downloading..."})
-                    downloader.download_album(album_info, yt_client=yt, progress_cb=progress_cb, force=True)
+                    ws_broadcast("progress", {"url": url, "title": f"{album_info['title']} - {album_info.get('albumArtist', '')}", "status": "Downloading..."})
+                    downloader.download_album(album_info, yt_client=yt, progress_cb=progress_cb, force=True, track_pending=True)
                 else:
                     ws_broadcast("progress", {"url": url, "status": "Could not resolve playlist"})
                     return

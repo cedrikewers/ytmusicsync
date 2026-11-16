@@ -25,7 +25,7 @@ def make_directory_name(album_title: str, artist_name: str) -> str:
     return "".join(c for c in unidecode(raw) if c.isalnum())
 
 
-def download_album(album_info: dict, yt_client: YTMusic | None = None, progress_cb=None, force: bool = False) -> bool:
+def download_album(album_info: dict, yt_client: YTMusic | None = None, progress_cb=None, force: bool = False, track_pending: bool = False, single_song: bool = False) -> bool:
     """Download all tracks of an album to the Jellyfin library.
 
     Args:
@@ -71,7 +71,13 @@ def download_album(album_info: dict, yt_client: YTMusic | None = None, progress_
         except Exception:
             logger.warning("Failed to download cover for %s", album_title)
 
-    msg = f"Downloading {album_title} by {album_artist} ({len(tracks)} tracks)"
+    if single_song and tracks:
+        song_artists = ", ".join(tracks[0].get("artists") or [album_artist])
+        subject = f"{tracks[0].get('title', 'Unknown')} by {song_artists}"
+        msg = f"Downloading {subject}"
+    else:
+        subject = f"{album_title} by {album_artist}"
+        msg = f"Downloading {subject} ({len(tracks)} tracks)"
     logger.info(msg)
     if progress_cb:
         progress_cb(msg)
@@ -178,10 +184,13 @@ def download_album(album_info: dict, yt_client: YTMusic | None = None, progress_
             lyrics=lyrics,
             cover_data=cover_data,
         )
+        if track_pending:
+            import pending
+            pending.add(dir_name, out_filename)
 
     if any_downloaded:
         library.mark_downloaded(dir_name)
-        msg = f"Completed: {album_title} by {album_artist}"
+        msg = f"Completed: {subject}"
         logger.info(msg)
         if progress_cb:
             progress_cb(msg)
@@ -211,12 +220,12 @@ def download_single_song(video_id: str, album_info: dict, yt_client=None, progre
     single_info = dict(album_info)
     single_info["tracks"] = [target]
     single_info["trackCount"] = album_info.get("trackCount", 1)
-    return download_album(single_info, yt_client, progress_cb, force=force)
+    return download_album(single_info, yt_client, progress_cb, force=force, single_song=True)
 
 
 def _download_track(video_id: str, out_path: str) -> bool:
-    """Download a single track using yt-dlp. Returns True on success."""
-    url = f"https://music.youtube.com/watch?v={video_id}"
+    """Download a single track using yt-dlp (video id or full URL). Returns True on success."""
+    url = video_id if video_id.startswith("http") else f"https://music.youtube.com/watch?v={video_id}"
     
     deno = os.environ.get("DENO_INSTALL", "/root/.deno/bin")
 
