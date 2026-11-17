@@ -15,6 +15,9 @@ COOKIE_FILE = os.environ.get("COOKIE_FILE", "")
 # Data directory for persistent state (artists.json, ignore.txt)
 DATA_DIR = os.environ.get("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
 
+# Temp folder (outside the music library) for songs awaiting album info
+STAGING_DIR = os.environ.get("STAGING_DIR", os.path.join(DATA_DIR, "staging"))
+
 # Web interface port
 WEB_PORT = int(os.environ.get("WEB_PORT", "5023"))
 

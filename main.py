@@ -7,7 +7,7 @@ from collections import deque
 from queue import Queue, Empty
 from threading import Lock, Thread
 
-from flask import Flask, Blueprint, Response, request, jsonify, send_from_directory
+from flask import Flask, Blueprint, Response, request, jsonify, send_file, send_from_directory
 from flask_sock import Sock
 
 import config
@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 # --- Flask app ---
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 bp = Blueprint("main", __name__)
 sock = Sock(app)
 
@@ -213,21 +214,78 @@ def list_pending():
     return jsonify(pending.list_grouped())
 
 
-@bp.route("/pending/cover/<dir_name>", methods=["GET"])
-def pending_cover(dir_name):
-    result = pending.cover(dir_name)
+@bp.route("/pending/cover", methods=["GET"])
+def pending_cover():
+    result = pending.cover(request.args.get("dir", ""), request.args.get("file") or None)
     if result is None:
         return jsonify({"error": "No cover"}), 404
     data, mime = result
-    return Response(data, mimetype=mime, headers={"Cache-Control": "max-age=3600"})
+    return Response(data, mimetype=mime, headers={"Cache-Control": "no-cache"})
+
+
+def _run_pending(fn):
+    try:
+        result = fn()
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except LookupError as e:
+        return jsonify({"error": str(e)}), 404
+    except Exception as e:
+        logger.exception("Pending operation failed")
+        return jsonify({"error": str(e)}), 500
+    return jsonify(result)
+
+
+@bp.route("/pending/audio", methods=["GET"])
+def pending_audio():
+    try:
+        path = pending.audio_path(request.args.get("dir", ""), request.args.get("file", ""))
+    except LookupError as e:
+        return jsonify({"error": str(e)}), 404
+    return send_file(path, mimetype="audio/mp4", conditional=True, max_age=0)
+
+
+@bp.route("/pending/waveform", methods=["GET"])
+def pending_waveform():
+    return _run_pending(lambda: pending.waveform(request.args.get("dir", ""), request.args.get("file", "")))
+
+
+@bp.route("/pending/edit", methods=["POST"])
+def pending_edit():
+    def run():
+        try:
+            fields = json.loads(request.form.get("fields", "{}"))
+        except json.JSONDecodeError:
+            raise ValueError("Invalid fields")
+        upload = request.files.get("cover")
+        cover_data = upload.read() if upload else None
+        with download_lock:
+            pending.edit(request.form.get("dir", ""), request.form.get("file", ""), fields, cover_data)
+        return {"saved": True}
+    return _run_pending(run)
+
+
+@bp.route("/pending/trim", methods=["POST"])
+def pending_trim():
+    data = request.get_json() or {}
+
+    def run():
+        try:
+            start, end = float(data.get("start")), float(data.get("end"))
+        except (TypeError, ValueError):
+            raise ValueError("start and end required")
+        with download_lock:
+            pending.trim(data.get("dir", ""), data.get("file", ""), start, end)
+        return {"trimmed": True}
+    return _run_pending(run)
 
 
 @bp.route("/pending/replace", methods=["POST"])
 def pending_replace():
     data = request.get_json() or {}
     dir_name, filename, url = data.get("dir", ""), data.get("file", ""), data.get("url", "").strip()
-    if not dir_name or not filename or not url:
-        return jsonify({"error": "dir, file and url required"}), 400
+    if not filename or not url:
+        return jsonify({"error": "file and url required"}), 400
     try:
         with download_lock:
             pending.replace_audio(dir_name, filename, url)
@@ -245,8 +303,6 @@ def pending_replace():
 def pending_delete():
     data = request.get_json() or {}
     dir_name, filename = data.get("dir", ""), data.get("file") or None
-    if not dir_name:
-        return jsonify({"error": "dir required"}), 400
     try:
         pending.delete(dir_name, filename)
     except ValueError as e:
@@ -264,6 +320,8 @@ def pending_dismiss():
 def _download_url(url: str):
     """Background task to download a YouTube Music URL."""
     parsed = ytmusic_client.parse_url(url)
+    if parsed is None and pending.is_plain_youtube_url(url):
+        parsed = {"type": "video", "id": url}
     if parsed is None:
         ws_broadcast("progress", {"url": url, "status": "Invalid URL"})
         return
@@ -272,8 +330,9 @@ def _download_url(url: str):
 
     yt = ytmusic_client.create_client()
 
-    def progress_cb(msg):
-        ws_broadcast("progress", {"url": url, "status": msg})
+    def progress_cb(msg, done=None, total=None):
+        extra = {"done": done, "total": total} if total and total > 1 else {}
+        ws_broadcast("progress", {"url": url, "status": msg, **extra})
 
     try:
         with download_lock:
@@ -316,6 +375,10 @@ def _download_url(url: str):
                 else:
                     ws_broadcast("progress", {"url": url, "status": "Could not resolve playlist"})
                     return
+
+            elif parsed["type"] == "video":
+                title = pending.stage_video(url, progress_cb)
+                ws_broadcast("progress", {"url": url, "title": title, "status": "Downloaded, add album info in Recent Downloads"})
 
         with queue_lock:
             progress_dict[url] = "Completed"

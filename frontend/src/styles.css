@@ -97,6 +97,10 @@ textarea { resize: vertical; margin-bottom: 12px; }
 .list { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 6px; }
 .list > li.row { padding: 8px 12px; background: var(--bg); border-radius: 8px; }
 
+.list > li.dl { display: flex; flex-direction: column; gap: 8px; padding: 8px 12px; background: var(--bg); border-radius: 8px; }
+.bar { height: 6px; background: #252a35; border-radius: 999px; overflow: hidden; }
+.bar > div { height: 100%; background: var(--accent); transition: width 0.3s; }
+
 .badge { font-size: 0.8rem; padding: 2px 10px; border-radius: 999px; background: #252a35; color: var(--muted); }
 .badge.ok { background: #14351f; color: #6ee79a; }
 .badge.err { background: #3d1820; color: #ff8b97; }
@@ -131,3 +135,15 @@ textarea { resize: vertical; margin-bottom: 12px; }
 
 .action { cursor: pointer; border: 1px dashed var(--accent); }
 .list > li.action:hover { background: #20242d; }
+
+.modal.wide { max-width: 760px; display: flex; flex-direction: column; gap: 12px; }
+.wave { width: 100%; height: 140px; background: var(--bg); border-radius: 8px; }
+.slider { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: var(--muted); }
+.slider input { padding: 0; accent-color: var(--accent); }
+.player { width: 100%; }
+.editor { display: flex; gap: 16px; align-items: flex-start; }
+.editor-cover { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.fields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.fields label { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem; color: var(--muted); }
+.song .badge { margin-left: 6px; }
+@media (max-width: 520px) { .editor { flex-direction: column; } }

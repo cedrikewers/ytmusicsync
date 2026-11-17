@@ -29,7 +29,7 @@ export default function App() {
         </nav>
       </header>
       <main>
-        {tab === "downloads" && <Downloads progress={socket.progress} titles={socket.titles} setProgress={socket.setProgress} />}
+        {tab === "downloads" && <Downloads progress={socket.progress} titles={socket.titles} counts={socket.counts} setProgress={socket.setProgress} />}
         {tab === "pending" && <Pending />}
         {tab === "artists" && <Artists />}
         {tab === "logs" && <LogPanel logs={socket.logs} onClear={socket.clearLogs} />}

@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import re
@@ -84,7 +85,9 @@ def download_album(album_info: dict, yt_client: YTMusic | None = None, progress_
 
     any_downloaded = False
 
-    for track in tracks:
+    for idx, track in enumerate(tracks):
+        if progress_cb:
+            progress_cb(msg, done=idx, total=len(tracks))
         source_video_id = track.get("videoId")
         if not source_video_id:
             logger.warning("Skipping track with no videoId: %s", track.get("title"))
@@ -152,12 +155,6 @@ def download_album(album_info: dict, yt_client: YTMusic | None = None, progress_
             any_downloaded = True
             continue
 
-        # Download with yt-dlp
-        if not _download_track(video_id, out_path):
-            continue
-
-        any_downloaded = True
-
         # Get lyrics and precise release date
         lyrics = None
         release_date_str = ""
@@ -169,11 +166,9 @@ def download_album(album_info: dict, yt_client: YTMusic | None = None, progress_
         if not release_date_str:
             release_date_str = f"{year}-01-01" if year and len(year) == 4 else (year or "")
 
-        # Tag the file
-        _tag_m4a(
-            filepath=out_path,
+        tag_meta = dict(
             title=track_title,
-            artists=all_artists,
+            artists=list(all_artists),
             album=album_title,
             album_artist=album_artist,
             track_number=track_number,
@@ -182,11 +177,24 @@ def download_album(album_info: dict, yt_client: YTMusic | None = None, progress_
             disc_total=1,
             date=release_date_str,
             lyrics=lyrics,
-            cover_data=cover_data,
         )
+
+        # Download with yt-dlp
+        if not _download_track(video_id, out_path):
+            if track_pending:
+                import pending
+                pending.add_missing(dir_name, out_filename, tag_meta, cover_data)
+            continue
+
+        any_downloaded = True
+
+        _tag_m4a(filepath=out_path, cover_data=cover_data, **tag_meta)
         if track_pending:
             import pending
             pending.add(dir_name, out_filename)
+
+    if progress_cb:
+        progress_cb(msg, done=len(tracks), total=len(tracks))
 
     if any_downloaded:
         library.mark_downloaded(dir_name)
@@ -221,6 +229,24 @@ def download_single_song(video_id: str, album_info: dict, yt_client=None, progre
     single_info["tracks"] = [target]
     single_info["trackCount"] = album_info.get("trackCount", 1)
     return download_album(single_info, yt_client, progress_cb, force=force, single_song=True)
+
+
+def fetch_video_info(url: str) -> dict | None:
+    """Return yt-dlp's metadata JSON for a single video, or None on failure."""
+    deno = os.environ.get("DENO_INSTALL", "/root/.deno/bin")
+    cmd = ["yt-dlp", "--js-runtimes", f"deno:{deno}", "--dump-single-json", "--no-playlist"]
+    if config.COOKIE_FILE and os.path.exists(config.COOKIE_FILE):
+        cmd.extend(["--cookies", config.COOKIE_FILE])
+    cmd.append(url)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0:
+            logger.error("yt-dlp info failed for %s: %s", url, result.stderr[-500:])
+            return None
+        return json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError):
+        logger.exception("Failed to fetch video info for %s", url)
+        return None
 
 
 def _download_track(video_id: str, out_path: str) -> bool:

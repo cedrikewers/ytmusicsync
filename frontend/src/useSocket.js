@@ -8,6 +8,7 @@ export function useSocket() {
   const [logs, setLogs] = useState([]);
   const [progress, setProgress] = useState({});
   const [titles, setTitles] = useState({});
+  const [counts, setCounts] = useState({});
   const wsRef = useRef(null);
 
   useEffect(() => {
@@ -24,6 +25,7 @@ export function useSocket() {
           setLogs((prev) => [...prev, msg.line].slice(-MAX_LOG_LINES));
         } else if (msg.event === "progress") {
           setProgress((prev) => ({ ...prev, [msg.url]: msg.status }));
+          if (msg.total) setCounts((prev) => ({ ...prev, [msg.url]: { done: msg.done, total: msg.total } }));
           if (msg.title) setTitles((prev) => ({ ...prev, [msg.url]: msg.title }));
         }
       };
@@ -41,5 +43,5 @@ export function useSocket() {
     };
   }, []);
 
-  return { logs, clearLogs: () => setLogs([]), progress, titles, setProgress };
+  return { logs, clearLogs: () => setLogs([]), progress, titles, counts, setProgress };
 }
